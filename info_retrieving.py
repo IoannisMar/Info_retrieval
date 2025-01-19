@@ -73,17 +73,19 @@ df = pd.read_csv('ApotelesmataXarakthrwn.csv')# Φόρτωση των έτοιμ
 
 # Προετοιμασία δεδομένων για TF-IDF και VSM
 corpus = df['Paragraphos'].apply(lambda x: ' '.join(eval(x))).tolist()#δημιουργία της λίστας corpus η οποία θα περιέχει ενιαία strings αντι για λίστες με tokens
-vectorizer = TfidfVectorizer()#αρχικοποίηση ενός TfidfVectorizer 
+vectorizer = TfidfVectorizer(norm=None)#αρχικοποίηση ενός TfidfVectorizer χωρίς κανονικοποίηση
 tfidf_matrix = vectorizer.fit_transform(corpus)#μετατροπή του corpus σε πίνακα Tfidf
 
 def search_query(query, algorithm):#Συνάρτηση search_query για την υλοποίηση των αναζητήσεων
- query_tokens = word_tokenize(query.lower())#Query_tokens περιλαμβάνει τα tokens των αρχείων
+ query_tokens = word_tokenize(query.lower())#Query_tokens περιλαμβάνει τα tokens του query που έδωσε ο χρήστης
  if algorithm == "Boolean Retrieval":#ΠΕΡΙΠΤΩΣΗ 1: Boolean Retrieval
   if "and" in query_tokens:#ΠΕΡΙΠΤΩΣΗ 1.1: Επιλογή AND
    terms = query.split('AND')
    terms = [term.strip() for term in terms]
             
    doc_sets = []#Ανακτάμε τα έγγραφα για την συγκρίσεις και την εύρεση κοινών
+   found_terms = set()  #Δημιουργία συνόλου για να καταγράφουμε τους όρους που βρέθηκαν
+
    for term in terms:#Για τον αριθμό των terms υλοποιούμε επανάληψη for
     result = inverted_index[inverted_index['Term'].isin(word_tokenize(term.lower()))]#Θέτουμε την εντολή result
     if not result.empty:#Σε περίπτωση που το result δεν είναι κενό
@@ -93,15 +95,23 @@ def search_query(query, algorithm):#Συνάρτηση search_query για τη�
       if docs.size > 0:#Έλεγχος αν βρέθηκε σε τουλάχιστον 1 έγγραφο
        doc_ids = set(map(int, docs[0].split(',')))#Δημιουργία map τύπου int για τα doc_ids
        document_ids.update(doc_ids)#Προσθήκη IDs στο document_ids
-     doc_sets.append(document_ids)#Προσθήκη του συνόλου των εγγράφων document_ids στο doc_sets
+     if document_ids:  # Αν βρέθηκαν έγγραφα για τον όρο
+      found_terms.add(term)  # Προσθήκη του όρου στα ευρεθέντα
+      doc_sets.append(document_ids) #Προσθήκη του συνόλου των εγγράφων document_ids στο doc_sets
+     
+   if len(found_terms) < len(terms):  #Αν κάποιο term δεν βρέθηκε
+    missing_terms = set(terms) - found_terms  #Βρίσκουμε ποιοι όροι δεν βρέθηκαν
+    return [f"Δεν βρέθηκαν αρχεία που να περιέχουν και τις δύο λέξεις. "
+            f"Λείπουν οι όροι: {', '.join(missing_terms)}."]
 
-   common_docs = set.intersection(*doc_sets)#Δημιουργία common_docs στην οποία εισχωρούμε τα έγγραφα που περιέχουν και τις 2 λέξεις
-   if not common_docs:#Περίπτωση που δεν υπάρχουν τέτοια αρχεία
+   common_docs = set.intersection(*doc_sets) if doc_sets else set()  #Αν το doc_sets είναι κενό, επιστρέφουμε κενό σύνολο
+
+   if not common_docs:  #Αν δεν υπάρχουν κοινά έγγραφα
     return [f"Δεν βρέθηκαν αρχεία που να περιέχουν και τις δύο λέξεις."]
-            
-   results = [f"Αρχείο: {df[df['Selida_ID'] == doc_id]['Selida'].values[0]}" for doc_id in common_docs]#Εμφάνιση μηνύματος και των εγγράφων που βρέθηκαν οι λέξεις
-   return results if results else [f"Δεν βρέθηκαν αρχεία που να περιέχουν και τις δύο λέξεις."]
-        
+
+   results = [f"Αρχείο: {df[df['Selida_ID'] == doc_id]['Selida'].values[0]}" for doc_id in common_docs]
+   return results#επιστροφή αποτελεσμάτων
+
   elif "or" in query_tokens:#ΠΕΡΊΠΤΩΣΗ 1.2: Επιλογή OR
    terms = query.split('OR')
    terms = [term.strip() for term in terms]
@@ -170,7 +180,7 @@ def search_query(query, algorithm):#Συνάρτηση search_query για τη�
  elif algorithm == "Vector Space Model":
     query_vector = vectorizer.transform([query])  # Μετασχηματίζει το ερώτημα σε διανύσματα TF-IDF  
     similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()  # Υπολογίζει την ομοιότητα (cosine similarity) μεταξύ του ερωτήματος και των εγγράφων  
-    ranked_indices = np.argsort(similarities)  # Ταξινομεί τις ομοιότητες κατά αύξουσα σειρά (χωρίς το[::-1])
+    ranked_indices = np.argsort(similarities)[::-1]  # Ταξινομεί τις ομοιότητες κατά αύξουσα σειρά (χωρίς το[::-1])
     results = [f"Αρχείο: {df.iloc[i]['Selida']} | Ομοιότητα: {similarities[i]:.4f}" for i in ranked_indices if similarities[i] > 0]  # Δημιουργεί τα αποτελέσματα (ταξινομημένα) με βάση την ομοιότητα
     return results if results else [f"Δεν βρέθηκαν αποτελέσματα για '{query}' με το Vector Space Model."]  # Επιστρέφει τα αποτελέσματα ή μήνυμα αν δεν βρέθηκαν
 
